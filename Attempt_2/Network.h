@@ -275,6 +275,7 @@ public:
         }
     }
 
+    // Dummy Train for MSEY and MSEZ of training data
     void train(size_t epochs, double trainingRate, double lambda, size_t patience = 10, double beta1 = 0.9, double beta2 = 0.99, double epsilon = 1e-8) {
         double bestCombinedMSE = std::numeric_limits<double>::infinity();
         size_t epochsSinceImprovement = 0;
@@ -324,5 +325,3 @@ public:
     Matrix<double>& getZTest() {return myZTest;}
     vector<double>& getYTest() {return myYTest;}
 };
-
-// test change
