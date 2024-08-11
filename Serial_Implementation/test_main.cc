@@ -2,7 +2,7 @@
 #include "Network.h"
 
 int main() {
-    vector<size_t> layerSizes = {5, 3, 3, 1}; 
+    vector<size_t> layerSizes = {5, 4, 3, 1}; 
     size_t n = 1000;
     double trainRatio = 0.75;
 
