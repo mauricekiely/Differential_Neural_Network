@@ -4,6 +4,9 @@
 #include "ActivationFuncs.h"
 #include "Initialization.h"
 
+#include <thread>  // Include the thread header
+#include <chrono>
+
 #include <iostream>
 
 class Layer {
@@ -17,9 +20,9 @@ class Layer {
     Matrix<double>  mydYdX, mydYdZ, mydCdW;
     vector<double>  mydCdB;
 
-    // Vectors and Matrices for Adam Optimiser
-    Matrix<double>  myMW,     myVW;
-    vector<double>  myMB,     myVB;
+    // Tensors for updating weights and biases
+    Matrix<Matrix<double>> myWTensor;
+    vector<Matrix<double>> myBTensor;
 
 public:
     Layer(const vector<size_t>& layerSizes, const size_t layerIdx, const size_t n) :
@@ -31,8 +34,8 @@ public:
         mydYdX(layerSizes[layerIdx], n, (layerIdx == (layerSizes.size() - 1) ? 1.0 : 0.0)),     mydYdZ(layerSizes[layerIdx], n),       // Initalize the Derivatives w.r.t training data   
         mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1], 0.0),    mydCdB (layerSizes[layerIdx], 0.0) ,        // Initialize Derivtives w.r.t Weights and Biases    
 
-        myMW(layerSizes[layerIdx], layerSizes[layerIdx - 1], 0.0),    myVW(layerSizes[layerIdx], layerSizes[layerIdx - 1], 0.0),    // Iniialize Weights for Adam 
-        myMB(layerSizes[layerIdx], 0.0),       myVB(layerSizes[layerIdx], 0.0)               // Iniialize Bias for Adam 
+        myWTensor(layerSizes[layerIdx], layerSizes[layerIdx - 1], Matrix<double>(layerSizes[0], n, 0.0)),  // Initialize the tensor required to update weights w.r.t ∂Y∂X component of cost
+        myBTensor(layerSizes[layerIdx], Matrix<double>(layerSizes[0], n, 0.0))  // Initialize the tensor required to update biases w.r.t ∂Y∂X component of cost
         {          
             weightInitializer(myW);
             cout << "Layer " << layerIdx << " Created with W size (" << myW.num_rows() << ", " << myW.num_cols() << "), B size " << myB.size() << endl;
@@ -52,10 +55,9 @@ public:
     Matrix<double>& getdCdW() {return mydCdW;}
     vector<double>& getdCdB() {return mydCdB;}
 
-    vector<double>& getMB() {return myMB;}
-    Matrix<double>& getMW() {return myMW;}
-    vector<double>& getVB() {return myVB;}
-    Matrix<double>& getVW() {return myVW;}
+    Matrix<Matrix<double>>& getWTensor() {return myWTensor;}
+    vector<Matrix<double>>& getBTensor() {return myBTensor;}
+
 };
 
 
@@ -112,32 +114,6 @@ public:
         for (size_t i = 0; i < myYTrain.size(); ++i) {myYPred[i] = myLayers.back().getX()[0][i];}
         MSE_Y(myYTrain, myYPred, YMSE); // Compute MSE.
     }
-
-    // Essentially repeat past step without disturbing the myLayer vector used in computation
-    double forwardPassTest(const Matrix<double>& xTest, const vector<double>& yTest) {
-        // Initialize temporary variables for Z and X
-        Matrix<double> Z = myLayers[0].getW().dot(xTest) + myLayers[0].getB();
-        Matrix<double> X = softplus(Z);
-
-        // Forward pass through the remaining layers
-        for (size_t i = 1; i < myLayers.size(); ++i) {
-            Z = myLayers[i].getW().dot(X) + myLayers[i].getB();
-            X = softplus(Z);
-        }
-
-        // Compute predictions and store them in a temporary vector
-        vector<double> yPred(yTest.size());
-        for (size_t i = 0; i < yTest.size(); ++i) {
-            yPred[i] = X[0][i];
-        }
-
-        // Compute MSE for the test data
-        double testMSE = 0.0;
-        MSE_Y(yTest, yPred, testMSE);
-
-        // Return the computed test MSE
-        return testMSE;
-    }
     
     void backPropagationOfY() {
         // Backpropagate through the layers to find ∂Y∂X_0
@@ -176,40 +152,246 @@ public:
 
         This function breaks the backprop into first finding derivatives w.r.t Z and then w.r.t Y
     */
-    void backPropagationOfCost(double lambda) {
-        double alpha = 1.0 / (1.0 + lambda), beta = lambda / (1.0 + lambda);
-
-        // Initialize the result matrix with ∂C/∂ZPred.     
-        // We build on this result Matrix as we go thorugh layers
-        Matrix<double> result = (myZPred - myZTrain) * (2.0 / myZPred.num_cols());
-
-        // Add Z component to ∂C/∂W and ∂C/∂B
-        for (size_t i = 0; i < myLayers.size(); ++i) {
-            myLayers[i].getdCdW() = (result.dot(myLayers[i].getdYdZ().transpose()) * beta).transpose();
-            result = myLayers[i].getW().dot(result);
-            myLayers[i].getdCdB() = (result.sumAlongRows() * beta);
-            result = result.elementwiseMultiply(myLayers[i].getZ());
-        }
-
-        // Convert vectos to 1D matrices for computation of ∂MSE_Y/∂W
+    void backPropagationOfCost(double alpha) {
+        // Convert vectors to 1D matrices for computation of ∂MSE_Y/∂W
         Matrix<double> matYPred = vectorToMatrix(myYPred);
         Matrix<double> matYTrain = vectorToMatrix(myYTrain);
 
-        result = ((matYPred - matYTrain) * (2.0 / myYPred.size())).elementwiseMultiply(dSoftplus(myLayers.back().getZ()));
+        // Initialize the result matrix for the output layer's gradients
+        Matrix<double> result = ((matYPred - matYTrain) * (2.0 / myYPred.size())).elementwiseMultiply(dSoftplus(myLayers.back().getZ()));
 
-        // Same logic as above to add additional 𝛼 component to weights and biases
-        for (size_t i = myLayers.size() - 1; i >= 0; --i) {
+        // Loop through the layers to backpropagate the gradients
+        for (int i = myLayers.size() - 1; i >= 0; --i) {
             if (i > 0) {
-                myLayers[i].getdCdW() = myLayers[i].getdCdW() + (result.dot(myLayers[i - 1].getdYdX().transpose()) * alpha);
+                // Calculate the gradient w.r.t. the weights of layer i and accumulate the alpha component
+                myLayers[i].getdCdW() = (result.dot(myLayers[i - 1].getdYdX().transpose()) * alpha);
             } else {
-                myLayers[i].getdCdW() = myLayers[i].getdCdW() + (result.dot(myXTrain.transpose()) * alpha);
+                // For the first layer, calculate the gradient w.r.t. the weights using XTrain and accumulate the alpha component
+                myLayers[i].getdCdW() = (result.dot(myXTrain.transpose()) * alpha);
             }
 
-            myLayers[i].getdCdB() = myLayers[i].getdCdB() + (result.sumAlongRows() * alpha);
+            // Calculate the gradient w.r.t. the biases of layer i and accumulate the alpha component
+            myLayers[i].getdCdB() = (result.sumAlongRows() * alpha);
 
-            if (i == 0) { break; }
-            result = myLayers[i].getW().transpose().dot(result).elementwiseMultiply(dSoftplus(myLayers[i - 1].getZ()));
+            // If not the first layer, propagate the gradient backward
+            if (i > 0) {
+                result = myLayers[i].getW().transpose().dot(result).elementwiseMultiply(dSoftplus(myLayers[i - 1].getZ()));
+            }
         }
+    }
+
+    void populateWeightTensors(double beta) {
+        size_t n = myZTrain.num_cols();  // Number of training points
+
+        // Iterate over each layer, starting from k=0 (first hidden layer)
+        for (size_t k = 0; k < myLayers.size(); ++k) {
+            Matrix<double>& dCdW = myLayers[k].getdCdW();
+
+            // Iterate over each weight in the weight matrix W of the current layer
+            for (size_t a = 0; a < myLayers[k].getW().num_rows(); ++a) {
+                for (size_t b = 0; b < myLayers[k].getW().num_cols(); ++b) {
+                    // Use a temporary matrix for calculations instead of storing the full tensor
+                    Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
+                    
+                    vector<size_t> indices(myLayerSizes.size() - 1, 0);
+                    
+                    // Populate the temporary matrix (inputs x n) of ∂C∂W
+                    for (size_t i = 0; i < myLayerSizes[0]; ++i) {
+                        for (size_t j = 0; j < n; ++j) {
+                            tempMatrix[i][j] = individualWeightTensorEntry(i, j, a, b, k, indices);
+                        }
+                    }
+
+                    // Calculate the Frobenius norm of the temporary matrix
+                    double norm = 0.0;
+                    for (size_t i = 0; i < tempMatrix.num_rows(); ++i) {
+                        for (size_t j = 0; j < tempMatrix.num_cols(); ++j) {
+                            double diff = tempMatrix[i][j];
+                            norm += diff * diff;
+                        }
+                    }
+                    norm = sqrt(norm);  // Take the square root of the sum of squares
+
+                    // Scale by the factor of (2.0 / n) for MSE and multiply by beta
+                    norm = beta * (2.0 / n) * norm;
+
+                    // Accumulate the norm into dCdW
+                    dCdW[a][b] += norm;
+                }
+            }
+        }
+    }
+
+    void populateBiasTensors(double beta) {
+        size_t n = myXTrain.num_cols();  // Number of training points
+
+        // Iterate over each layer, starting from k=0 (first hidden layer)
+        for (size_t k = 0; k < myLayers.size(); ++k) {
+            vector<double>& dCdB = myLayers[k].getdCdB();  // Reference to the condensed vector of norms
+
+            // Iterate over each bias in the bias vector B of the current layer
+            for (size_t a = 0; a < myLayers[k].getB().size(); ++a) {
+                // Use a temporary matrix for calculations instead of storing the full tensor
+                Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
+                
+                vector<size_t> indices(myLayerSizes.size() - 1, 0);
+                
+                // Populate the temporary matrix (inputs x n) of ∂C∂B
+                for (size_t i = 0; i < myLayerSizes[0]; ++i) {
+                    for (size_t j = 0; j < myXTrain.num_cols(); ++j) {
+                        // Get value for ∂C_{ij}/∂B_a
+                        tempMatrix[i][j] = productRuleComponentOfBackProp(i, j, a, 0, k, indices, true) * (myZPred[i][j] - getZTrain()[i][j]);
+                    }
+                }
+
+                // Calculate the Frobenius norm of the temporary matrix
+                double norm = 0.0;
+                for (size_t i = 0; i < tempMatrix.num_rows(); ++i) {
+                    for (size_t j = 0; j < tempMatrix.num_cols(); ++j) {
+                        norm += tempMatrix[i][j] * tempMatrix[i][j];
+                    }
+                }
+                norm = sqrt(norm);  // Take the square root of the sum of squares
+
+                // Scale by the factor of (2.0 / n) for MSE and multiply by beta
+                norm = beta * (2.0 / n) * norm;
+
+                // Accumulate the norm into dCdB
+                dCdB[a] += norm;
+            }
+        }
+    }
+
+    // Get Derivative w.r.t individual Cost matrix Entry
+    double individualWeightTensorEntry(size_t i, size_t j, size_t a, size_t b, size_t k, vector<size_t>& Indices) {
+        // Indices for each layer, excluding the input layer
+        vector<size_t> indices(myLayerSizes.size() - 1, 0);  
+        
+        // Product Rule part of Weight derivative
+        double productSum = 0.0;
+        recursiveProdSum(i, j, a, b, k, myLayerSizes, indices, 0, productSum);
+        
+        // Trailing part of derivative
+        double trailingSum = 0.0;
+        if (k == 0) {
+            recursiveTrailingTerms(i, j, a, b, k, myLayerSizes, indices, 1, trailingSum);  // Skip the outermost loop
+        } else {
+            recursiveTrailingTerms(i, j, a, b, k, myLayerSizes, indices, 0, trailingSum);
+        }
+
+        // Add part mse component of cost derivative
+        double mse_component = (myZPred[i][j] - getZTrain()[i][j]); 
+        return (productSum + trailingSum) * mse_component;
+    }
+
+    // Recursive function to apply the varying amount of nested summations 
+    void recursiveProdSum(size_t i, size_t j, size_t a, size_t b, size_t k, const vector<size_t>& layerSizes, vector<size_t>& indices, size_t currentLayer, double& sum) {
+        if (currentLayer == layerSizes.size() - 1) {
+            // Base case: All layers processed, compute the product rule component and add to the sum
+            double result = productRuleComponentOfBackProp(i, j, a, b, k, indices, false);
+            sum += result;
+            return;
+        }
+
+        // Recursive case: Iterate over the range for the current layer and recurse
+        for (size_t n = 0; n < layerSizes[currentLayer + 1]; ++n) {
+            indices[currentLayer] = n;  // Update the index for the current layer
+            recursiveProdSum(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);  // Recur for the next layer
+        }
+    }
+
+    // Similar to before
+   void recursiveTrailingTerms(size_t i, size_t j, size_t a, size_t b, size_t k, const vector<size_t>& layerSizes, vector<size_t>& indices, size_t currentLayer, double& sum) {
+        if (currentLayer == layerSizes.size() - 1) {
+            // Base case: All layers processed, compute the trailing terms and add to the sum
+            double result = trailingTermsOfProd(i, j, a, b, k, indices);
+            sum += result;
+            return;
+        }
+
+        // Handle the special cases where indices are fixed due to W_{ab} Components in derivative
+        if (currentLayer == k) {
+            recursiveTrailingTerms(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);
+        } else if (currentLayer == k - 1) {
+            recursiveTrailingTerms(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);
+        } else {
+            // Recursive case: Iterate over the range for the current layer and recurse
+            for (size_t n = 0; n < layerSizes[currentLayer + 1]; ++n) {
+                indices[currentLayer] = n;  // Update the index for the current layer
+                recursiveTrailingTerms(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);  // Recur for the next layer
+            }
+        }
+    }
+
+
+    double productRuleComponentOfBackProp(size_t i, size_t j, size_t a, size_t b, size_t k, vector<size_t> Indices, bool isBias) {
+        // Find leading weight terms 
+        double weightComponent = myLayers[0].getW()[Indices[0]][i];
+        for (size_t m = 1; m < Indices.size(); ++m) {weightComponent *= myLayers[m].getW()[Indices[m]][Indices[m-1]];}
+
+        // We need to access Xtrain instead of activated nodes in a layer for k = 0
+        Matrix<double>& currX = (k == 0) ? getXTrain() : myLayers[k-1].getX();
+
+        // Initialize Product Rule component for weight or biases
+        double prodRuleTotal = (isBias) ? d2Softplus(myLayers[k].getZ()[a][j]) : d2Softplus(myLayers[k].getZ()[a][j]) * currX[b][j];
+
+        // Product of remaining elements of kth part of product rule
+        for (size_t m = k + 1; m < getNumLayers() - 1; ++m) {prodRuleTotal *= dSoftplus(myLayers[m].getZ()[Indices[m]][j]);}
+
+        // Sum through rest of the product rule
+        for (size_t l = k + 1; l < getNumLayers() - 1; ++l) {
+            double tempSum = d2Softplus(myLayers[l].getZ()[Indices[l]][j]);
+
+            // Before l
+            for (size_t m = k + 2; m <= l; ++m) {tempSum *= myLayers[m].getW()[Indices[m]][Indices[m-1]] * dSoftplus(myLayers[m-1].getZ()[Indices[m-1]][j]);}
+
+            // Index specific terms of second derivative
+            tempSum *= myLayers[k+1].getW()[Indices[k+1]][a] * dSoftplus(myLayers[k].getZ()[a][j]);
+            if (!isBias) {tempSum *= currX[b][j];}
+
+            // Remaining terms of product rule
+            for (size_t m = k; m < getNumLayers() - 1; ++m) {
+                if (m != l) {tempSum *= dSoftplus(myLayers[m].getZ()[Indices[m]][j]);}
+            }
+            prodRuleTotal += tempSum;
+        }
+
+        // Product for all sigma Zs not included in product rule
+        for (size_t m = 0; m < k; ++m) {prodRuleTotal *= dSoftplus(myLayers[m].getZ()[Indices[m]][j]);}
+
+        double total = prodRuleTotal * weightComponent;
+        return total;
+    }
+
+    // Trailing terms from product rule
+    double trailingTermsOfProd(size_t i, size_t j, size_t a, size_t b, size_t k, vector<size_t> Indices) {
+        Indices[k] = a;
+        double trailProdTotal;
+        if (k == 0) {
+            // Special case for k == 0: only use the first condition. Only have trailing terms for W^(0)_{n i}, i == b
+            if (i != b) {return 0.0;}
+            trailProdTotal =  dSoftplus(myLayers[k].getZ()[a][j]);
+        } else {
+            Indices[k-1] = b;
+            // General case for k > 0
+            trailProdTotal = dSoftplus(myLayers[k-1].getZ()[b][j]) * dSoftplus(myLayers[k].getZ()[a][j]);
+
+            // Multiply the leading terms up to k-2
+            for (size_t m = 0; m <= k-2; ++m) {
+                trailProdTotal *= dSoftplus(myLayers[m].getZ()[Indices[m]][j]); 
+            }
+        }
+
+        // Multiply the trailing terms from k+1 onwards
+        for (size_t m = k+1; m < getNumLayers() - 1; ++m) {trailProdTotal *= dSoftplus(myLayers[m].getZ()[Indices[m]][j]);}
+
+        // Calculate the weight component, excluding W^{(k)}
+        double weightComponent = (k != 0) ? myLayers[0].getW()[Indices[0]][i] : 1.0;
+        for (size_t m = 1; m < Indices.size(); ++m) {
+            if (m != k) { weightComponent *= myLayers[m].getW()[Indices[m]][Indices[m-1]];}
+        }
+
+        return trailProdTotal * weightComponent;
     }
 
     // Update weights and Biases with Constant Step Size
@@ -220,54 +402,43 @@ public:
         }
     }
 
-    // Adam Optimiser for updating Weights
-    void updateWeightsAdam(double trainingRate, double beta1, double beta2, double epsilon, int t) {
-        for (Layer& myLayer : myLayers) {
-            // Update first moment estimate (mW and mB)
-            myLayer.getMW() = (myLayer.getdCdW() * (1.0 - beta1)) + (myLayer.getMW() * beta1);
-            myLayer.getMB() = (myLayer.getMB() * beta1) +(myLayer.getdCdB()* (1.0 - beta1));
+    // Train for MSEY and MSEZ of training data
+    void train(size_t epochs, double trainingRate, double lambda, double beta1 = 0.9, double beta2 = 0.999, double epsilon = 1e-8, size_t patience = 5, double convergenceThreshold = 0.001) {
+        // Get alpha and Beta Values
+        double alpha = 1.0 / (1.0 + lambda); 
+        double beta = lambda / (1.0 + lambda);
 
-            // Update second moment estimate (vW and vB)
-            myLayer.getVW() = (myLayer.getVW() * beta2) + (myLayer.getdCdW().elementwiseMultiply(myLayer.getdCdW()) * (1.0 - beta2));
-            myLayer.getVB() = (myLayer.getVB() * beta2) + ((myLayer.getdCdB() * myLayer.getdCdB()) * (1.0 - beta2));
-
-            // Compute bias-corrected first and second moment estimates
-            Matrix<double> mW_hat = myLayer.getMW() / (1.0 - pow(beta1, t));
-            vector<double> mB_hat = myLayer.getMB() * (1.0 / (1.0 - pow(beta1, t)));
-
-            Matrix<double> vW_hat = myLayer.getVW() / (1.0 - pow(beta2, t));
-            vector<double> vB_hat = myLayer.getVB() * (1.0 / (1.0 - pow(beta2, t)));
-
-            // Update weights and biases
-            myLayer.getW() = myLayer.getW() - (mW_hat.elementwiseDivide(vW_hat.apply(sqrt) + epsilon) * trainingRate);
-            myLayer.getB() = myLayer.getB() - ((mB_hat / (vec_apply(vB_hat, sqrt) + epsilon)) * trainingRate);
-        }
-    }
-
-    void trainOnYMSE(size_t epochs, double trainingRate, double lambda, size_t patience = 10, double beta1 = 0.9, double beta2 = 0.99, double epsilon = 1e-8) {
-        // Initialise best MSE for early CallBack
-        double bestMSE_Y = numeric_limits<double>::infinity();
+        // Variables for early stopping
+        double bestMSEY = std::numeric_limits<double>::infinity();
         size_t epochsSinceImprovement = 0;
 
         for (size_t epoch = 1; epoch <= epochs; ++epoch) {
+            // Forward Propgate
             forwardPropogation();         
-            backPropagationOfCost(lambda); 
+            
+            // Compute gradients w.r.t MSE_Y and accumulate them with the alpha component
+            backPropagationOfCost(alpha); 
+            // Populate the weight tensors, compute gradients w.r.t MSE_Z, and accumulate them with the beta component
+            populateWeightTensors(beta);
+            populateBiasTensors(beta);
 
-            // Update weights using Adam optimizer
-            updateWeightsAdam(trainingRate, beta1, beta2, epsilon, epoch);
+            // Update weights
+            updateWeights(trainingRate);
 
-            double currentMSE_Y = forwardPassTest(myXTest, myYTest);
+            // Calculate the combined MSE using the specified formula
+            double currentMSEY = getMSEY();
 
-            // Check if the current MSE_Y is lower than the best observed so far
-            if (currentMSE_Y < bestMSE_Y) {
-                bestMSE_Y = currentMSE_Y;
-                epochsSinceImprovement = 0; // Reset counter if improvement is found
-            } else {epochsSinceImprovement++;}
+            // Output the current epoch's MSE values
+            cout << "Epoch " << epoch << ": MSE_Y = " << currentMSEY << endl;
 
-            // Print progress every 5 epochs
-            if (epoch % 5 == 0) {cout << "Epoch " << epoch << ": MSE_Y = " << getMSEY() << ", MSE_Z = " << getMSEZ() << endl;}
+            // Check for early stopping based on MSE_Y alone
+            if (currentMSEY < bestMSEY - convergenceThreshold) {
+                bestMSEY = currentMSEY;
+                epochsSinceImprovement = 0; // Reset counter if improved
+            } else {
+                epochsSinceImprovement++;
+            }
 
-            // Early stopping condition
             if (epochsSinceImprovement >= patience) {
                 cout << "Early stopping at epoch " << epoch << " as MSE_Y has not improved for " << patience << " consecutive epochs." << endl;
                 break;
@@ -275,46 +446,12 @@ public:
         }
     }
 
-    // Dummy Train for MSEY and MSEZ of training data
-    void train(size_t epochs, double trainingRate, double lambda, size_t patience = 10, double beta1 = 0.9, double beta2 = 0.99, double epsilon = 1e-8) {
-        double bestCombinedMSE = std::numeric_limits<double>::infinity();
-        size_t epochsSinceImprovement = 0;
 
-        for (size_t epoch = 1; epoch <= epochs; ++epoch) {
-            forwardPropogation();         // Perform forward propagation
-            backPropagationOfCost(lambda); // Compute gradients
-
-            // Update weights using Adam optimizer
-            updateWeightsAdam(trainingRate, beta1, beta2, epsilon, epoch);
-
-            // Calculate the combined MSE using the specified formula
-            double combinedMSE = ((1.0 / (1.0 + lambda)) * getMSEY()) + ((lambda / (1.0 + lambda)) * getMSEZ());
-
-            // Check if the current combined MSE is lower than the best observed so far
-            if (combinedMSE < bestCombinedMSE) {
-                bestCombinedMSE = combinedMSE;
-                epochsSinceImprovement = 0; // Reset counter if improvement is found
-            } else {
-                epochsSinceImprovement++;
-            }
-
-            // Optionally, print progress every 5 epochs
-            if (epoch % 5 == 0) {
-                cout << "Epoch " << epoch << ": MSE_Y = " << getMSEY() << ", MSE_Z = " << getMSEZ() << ", Combined MSE = " << combinedMSE << endl;
-            }
-
-            // Early stopping condition
-            if (epochsSinceImprovement >= patience) {
-                cout << "Early stopping at epoch " << epoch << " as combined MSE has not improved for " << patience << " consecutive epochs." << endl;
-                break;
-            }
-        }
-    }
     // Accessor methods
     size_t getNumLayers() const {return myNLayers;}   // Node the Layer vector actually has 1 less cos of no input layer object
     const vector<size_t>& getLayerSizes() const {return myLayerSizes;}
     Matrix<double>& getXTrain() {return myXTrain;}
-    Matrix<double>& getZTrain() {return myZTrain;}
+    Matrix<double>& getZTrain() {return myZTrain;} 
     vector<double>& getYTrain() {return myYTrain;}
     vector<Layer>& getLayers() {return myLayers;}
 

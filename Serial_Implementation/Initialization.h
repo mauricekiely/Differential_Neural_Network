@@ -18,51 +18,139 @@ void weightInitializer(Matrix<double>& mat) {
         }}
 }
 
-// Add random nise to a value
-double addNoise(double value, double noise_level, mt19937& gen) {
-    normal_distribution<> d(0, noise_level);
+// Helper function for the CDF of the standard normal distribution
+static double N(double z) {return 0.5 * (1 + erf(z * M_SQRT1_2));}
+
+// Function to calculate the price and Greeks for a European call option
+void calcOptionAndGreeks(double S, double K, double t, double sig, double r, double& call, double& delta, double& vega, double& rho, double& theta) {
+    double sig_sqrt_t = sig * sqrt(t);
+    double d1 = (log(S / K) + (r + sig * sig / 2.0) * t) / sig_sqrt_t;
+    double d2 = d1 - sig_sqrt_t;
+
+    double Nd1 = N(d1);
+    double Nd2 = N(d2);
+    double expRT = exp(-r * t);
+
+    // Option call price
+    call = S * Nd1 - K * expRT * Nd2;
+
+    // Sensitivities (Greeks)
+    double dNd1 = exp(-d1 * d1 / 2.0) / sqrt(2 * M_PI);
+    delta = Nd1;
+    vega = S * sqrt(t) * dNd1;
+    rho = K * t * expRT * Nd2;
+    theta = (1.0 / t) * (S * sig * dNd1 / (2 * sqrt(t)) + r * K * expRT * Nd2);
+}
+
+// Add random noise to a value
+double addNoise(double value, double noise_level, std::mt19937& gen) {
+    std::normal_distribution<> d(0, noise_level);
     return value + d(gen);
 }
 
-// Function to generate synthetic data
-void generateSyntheticData(vector<size_t>& layerSizes, size_t n, Matrix<double>& xTrain, Matrix<double>& zTrain, vector<double>& yTrain, double noise_level) {
-    random_device rd;  // Seed for the random number engine
-    mt19937 gen(rd()); // Mersenne Twister random number generator
-    uniform_real_distribution<> dis(0.0, 1.0); // Uniform distribution between 0 and 1
+// Function to standardize a matrix
+void standardizeMatrix(Matrix<double>& mat, vector<double>& means, vector<double>& stdDevs) {
+    size_t rows = mat.num_rows();
+    size_t cols = mat.num_cols();
 
-    // Non-linear function: y = sin(x1 + x2 + ... + xm)
-    // Derivative: dy/dx_i = cos(x1 + x2 + ... + xm) for each x_i
+    // Calculate mean and standard deviation for each row (feature)
+    for (size_t i = 0; i < rows; ++i) {
+        double sum = 0.0;
+        for (size_t j = 0; j < cols; ++j) {sum += mat[i][j];}
+        means[i] = sum / cols;
 
-    // Fill xTrain with random values
-    for (size_t i = 0; i < xTrain.num_rows(); ++i) {
-        for (size_t j = 0; j < xTrain.num_cols(); ++j) {
-            xTrain[i][j] = dis(gen);
-        }
-    }
+        double sq_sum = 0.0;
+        for (size_t j = 0; j < cols; ++j) {sq_sum += pow(mat[i][j] - means[i], 2);}
+        stdDevs[i] = sqrt(sq_sum / cols);
 
-    // Calculate yTrain and zTrain with noise
-    for (size_t j = 0; j < n; ++j) {
-        double x_sum = 0.0;
-        for (size_t i = 0; i < xTrain.num_rows(); ++i) {x_sum += xTrain[i][j];}
-
-        // Calculate the function value with noise
-        double y_value = sin(x_sum);
-        yTrain[j] = addNoise(y_value, noise_level, gen);
-
-        // Calculate the derivatives with noise
-        double dy_dx = cos(x_sum);
-        for (size_t i = 0; i < xTrain.num_rows(); ++i) {zTrain[i][j] = addNoise(dy_dx, noise_level, gen);}
+        // Standardize the data
+        for (size_t j = 0; j < cols; ++j) {mat[i][j] = (mat[i][j] - means[i]) / stdDevs[i];}
     }
 }
 
-// Split data into test and training with proportion trainRatio
+// Function to standardize a vector
+void standardizeVector(vector<double>& vec, double& mean, double& stdDev) {
+    size_t n = vec.size();
+
+    // Calculate mean and standard deviation
+    double sum = 0.0;
+    for (size_t i = 0; i < n; ++i) {sum += vec[i];}
+    mean = sum / n;
+
+    double sq_sum = 0.0;
+    for (size_t i = 0; i < n; ++i) {sq_sum += pow(vec[i] - mean, 2);}
+    stdDev = sqrt(sq_sum / n);
+
+    // Standardize the data
+    for (size_t i = 0; i < n; ++i) {vec[i] = (vec[i] - mean) / stdDev;}
+}
+
+// Function to generate synthetic data based on a European option model
+void generateSyntheticData(vector<size_t>& layerSizes, size_t n, Matrix<double>& xTrain, Matrix<double>& zTrain, vector<double>& yTrain, double noise_level, size_t seed) {
+    std::random_device rd;
+    std::mt19937 gen(seed);
+    std::uniform_real_distribution<> spotDist(90.0, 110.0);
+    std::uniform_real_distribution<> strikeDist(95.0, 105.0);
+    std::uniform_real_distribution<> timeDist(0.1, 3.0);
+    std::uniform_real_distribution<> volDist(0.05, 0.30);
+    std::uniform_real_distribution<> rateDist(0.001, 0.05);
+
+    for (size_t j = 0; j < n; ++j) {
+        // Generate random inputs
+        double S = spotDist(gen);
+        double K = strikeDist(gen);
+        double t = timeDist(gen);
+        double sig = volDist(gen);
+        double r = rateDist(gen);
+
+        // Calculate the option price and Greeks
+        double call, delta, vega, rho, theta;
+        calcOptionAndGreeks(S, K, t, sig, r, call, delta, vega, rho, theta);
+
+        // Assign input values to xTrain
+        xTrain[0][j] = S;
+        xTrain[1][j] = K;
+        xTrain[2][j] = t;
+        xTrain[3][j] = sig;
+        xTrain[4][j] = r;
+
+        // Assign output values to yTrain and zTrain with noise
+        yTrain[j] = addNoise(call, noise_level, gen);
+        zTrain[0][j] = addNoise(delta, noise_level * 5, gen);
+        zTrain[1][j] = addNoise(delta, noise_level * 5, gen);  // Derivative w.r.t. Strike (same as delta)
+        zTrain[2][j] = addNoise(vega, noise_level, gen);
+        zTrain[3][j] = addNoise(rho, noise_level * 0.1, gen);
+        zTrain[4][j] = addNoise(theta, noise_level * 0.05, gen);
+    }
+
+    // Standardize xTrain, yTrain, and zTrain
+    vector<double> xMeans(layerSizes[0]);
+    vector<double> xStdDevs(layerSizes[0]);
+    standardizeMatrix(xTrain, xMeans, xStdDevs);
+
+    vector<double> zMeans(layerSizes[0]);
+    vector<double> zStdDevs(layerSizes[0]);
+    standardizeMatrix(zTrain, zMeans, zStdDevs);
+
+    double yMean, yStdDev;
+    standardizeVector(yTrain, yMean, yStdDev);
+}
+
+// Split data into training and test sets and apply standardization
 void splitData(const Matrix<double>& x, const Matrix<double>& z, const vector<double>& y,
                Matrix<double>& xTrain, Matrix<double>& xTest,
                Matrix<double>& zTrain, Matrix<double>& zTest,
                vector<double>& yTrain, vector<double>& yTest,
-               double trainRatio=0.8) {
+               double trainRatio = 0.8) {
     size_t n = y.size();
     size_t trainSize = static_cast<size_t>(n * trainRatio);
+
+    // Prepare containers for the test data statistics
+    vector<double> xMeans(x.num_rows(), 0.0);
+    vector<double> xStdDevs(x.num_rows(), 0.0);
+    vector<double> zMeans(z.num_rows(), 0.0);
+    vector<double> zStdDevs(z.num_rows(), 0.0);
+    double yMean = 0.0, yStdDev = 0.0;
 
     for (size_t i = 0; i < trainSize; ++i) {
         for (size_t j = 0; j < x.num_rows(); ++j) {
@@ -78,5 +166,26 @@ void splitData(const Matrix<double>& x, const Matrix<double>& z, const vector<do
             zTest[j][i - trainSize] = z[j][i];
         }
         yTest[i - trainSize] = y[i];
+    }
+
+    // Standardize the training data
+    standardizeMatrix(xTrain, xMeans, xStdDevs);
+    standardizeMatrix(zTrain, zMeans, zStdDevs);
+    standardizeVector(yTrain, yMean, yStdDev);
+
+    // Apply the same standardization to the test data using the training data's mean and std deviation
+    for (size_t i = 0; i < xTest.num_rows(); ++i) {
+        for (size_t j = 0; j < xTest.num_cols(); ++j) {
+            xTest[i][j] = (xTest[i][j] - xMeans[i]) / xStdDevs[i];
+        }
+    }
+
+    for (size_t i = 0; i < zTest.num_rows(); ++i) {
+        for (size_t j = 0; j < zTest.num_cols(); ++j) {
+            zTest[i][j] = (zTest[i][j] - zMeans[i]) / zStdDevs[i];
+        }
+    }
+    for (size_t i = 0; i < yTest.size(); ++i) {
+        yTest[i] = (yTest[i] - yMean) / yStdDev;
     }
 }

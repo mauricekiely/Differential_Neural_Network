@@ -2,7 +2,7 @@
 CXX = g++
 
 # Compiler flags
-CXXFLAGS = -Wall -std=c++20
+CXXFLAGS = -Wall -std=c++20 -O3
 
 # Target executable
 TARGET = test_main

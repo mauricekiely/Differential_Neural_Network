@@ -156,7 +156,7 @@ public:
         return result;
     }
 
-    // Matrix + Vector addition
+    // Matrix - Vector subtraction
     Matrix operator-(const vector<T>& vec) const {
         if (myRows != vec.size()) {throw invalid_argument("Matrix rows must match vector size for addition.");}
         Matrix result(myRows, myCols);
