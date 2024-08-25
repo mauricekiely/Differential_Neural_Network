@@ -136,6 +136,30 @@ public:
         MSE_Z(myZTrain, myZPred, ZMSE);
     }
 
+    void forwardPassTest(const Matrix<double>& xTest, vector<double>& yPredTest, double& testMSE) {
+        // Local copies of layer activations to avoid modifying the original variables
+        vector<Matrix<double>> localZ(myLayers.size());
+        vector<Matrix<double>> localX(myLayers.size());
+
+        // Input Layer processing
+        localZ[0] = myLayers[0].getW().dot(xTest) + myLayers[0].getB();
+        localX[0] = softplus(localZ[0]);
+
+        // Forward pass through the remaining layers
+        for (size_t i = 1; i < myLayers.size(); ++i) {
+            localZ[i] = myLayers[i].getW().dot(localX[i - 1]) + myLayers[i].getB();
+            localX[i] = softplus(localZ[i]);
+        }
+
+        // Transfer to yPredTest vector from the output layer of the network
+        for (size_t i = 0; i < yPredTest.size(); ++i) {
+            yPredTest[i] = localX.back()[0][i];
+        }
+
+        // Compute MSE for the test data
+        MSE_Y(myYTest, yPredTest, testMSE);
+    }
+
     // Combine 2 parts of forward Pass
     void forwardPropogation() {
         forwardPass(myXTrain);
@@ -403,18 +427,19 @@ public:
     }
 
     // Train for MSEY and MSEZ of training data
-    void train(size_t epochs, double trainingRate, double lambda, double beta1 = 0.9, double beta2 = 0.999, double epsilon = 1e-8, size_t patience = 5, double convergenceThreshold = 0.001) {
+    void train(size_t epochs, double trainingRate, double lambda) {
         // Get alpha and Beta Values
         double alpha = 1.0 / (1.0 + lambda); 
         double beta = lambda / (1.0 + lambda);
 
-        // Variables for early stopping
-        double bestMSEY = std::numeric_limits<double>::infinity();
-        size_t epochsSinceImprovement = 0;
+        // Variable to store MSE for the test set
+        double testMSE = 0.0;
+
+        // Variable to store the predictions for the test set
+        vector<double> yPredTest(myYTest.size());
 
         for (size_t epoch = 1; epoch <= epochs; ++epoch) {
-            // Forward Propgate
-            forwardPropogation();         
+            forwardPropogation();  // Perform forward propagation on the training data
             
             // Compute gradients w.r.t MSE_Y and accumulate them with the alpha component
             backPropagationOfCost(alpha); 
@@ -422,27 +447,17 @@ public:
             populateWeightTensors(beta);
             populateBiasTensors(beta);
 
-            // Update weights
-            updateWeights(trainingRate);
-
-            // Calculate the combined MSE using the specified formula
+            // Calculate the combined MSE for the training set
             double currentMSEY = getMSEY();
 
-            // Output the current epoch's MSE values
-            cout << "Epoch " << epoch << ": MSE_Y = " << currentMSEY << endl;
+            // Perform forward pass on the test set and calculate MSE_Y for the test set
+            forwardPassTest(myXTest, yPredTest, testMSE);
 
-            // Check for early stopping based on MSE_Y alone
-            if (currentMSEY < bestMSEY - convergenceThreshold) {
-                bestMSEY = currentMSEY;
-                epochsSinceImprovement = 0; // Reset counter if improved
-            } else {
-                epochsSinceImprovement++;
-            }
+            // Update weights using the accumulated gradient
+            updateWeights(trainingRate);
 
-            if (epochsSinceImprovement >= patience) {
-                cout << "Early stopping at epoch " << epoch << " as MSE_Y has not improved for " << patience << " consecutive epochs." << endl;
-                break;
-            }
+            // Output the current epoch's MSE values for both training and test sets
+            cout << "Epoch " << epoch << ": MSE_Y (Train) = " << currentMSEY << ", MSE_Y (Test) = " << testMSE << endl;
         }
     }
 

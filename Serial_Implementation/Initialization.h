@@ -1,45 +1,48 @@
 #pragma once
 
 #include "Matrix.h"
-
 #include <random>
 
+// Function to initialize weights using Xavier initialization
 void weightInitializer(Matrix<double>& mat) {
-    random_device rd;
-    mt19937 gen(1234);
-    uniform_real_distribution<> uDist(-1.0, 1.0);
+    std::random_device rd;
+    std::mt19937 gen(1234);
+    std::uniform_real_distribution<> uDist(-1.0, 1.0);
 
     // Calculate the limit for Xavier initialization
-    double limit = sqrt(6.0 / (mat.num_rows() + mat.num_cols()));
+    double limit = std::sqrt(6.0 / (mat.num_rows() + mat.num_cols()));
 
     for (size_t i = 0; i < mat.num_rows(); ++i) {
         for (size_t j = 0; j < mat.num_cols(); ++j) {
             mat[i][j] = uDist(gen) * limit;
-        }}
+        }
+    }
 }
 
 // Helper function for the CDF of the standard normal distribution
-static double N(double z) {return 0.5 * (1 + erf(z * M_SQRT1_2));}
+static double N(double z) {
+    return 0.5 * (1 + std::erf(z * M_SQRT1_2));
+}
 
 // Function to calculate the price and Greeks for a European call option
 void calcOptionAndGreeks(double S, double K, double t, double sig, double r, double& call, double& delta, double& vega, double& rho, double& theta) {
-    double sig_sqrt_t = sig * sqrt(t);
-    double d1 = (log(S / K) + (r + sig * sig / 2.0) * t) / sig_sqrt_t;
+    double sig_sqrt_t = sig * std::sqrt(t);
+    double d1 = (std::log(S / K) + (r + sig * sig / 2.0) * t) / sig_sqrt_t;
     double d2 = d1 - sig_sqrt_t;
 
     double Nd1 = N(d1);
     double Nd2 = N(d2);
-    double expRT = exp(-r * t);
+    double expRT = std::exp(-r * t);
 
     // Option call price
     call = S * Nd1 - K * expRT * Nd2;
 
     // Sensitivities (Greeks)
-    double dNd1 = exp(-d1 * d1 / 2.0) / sqrt(2 * M_PI);
+    double dNd1 = std::exp(-d1 * d1 / 2.0) / std::sqrt(2 * M_PI);
     delta = Nd1;
-    vega = S * sqrt(t) * dNd1;
+    vega = S * std::sqrt(t) * dNd1;
     rho = K * t * expRT * Nd2;
-    theta = (1.0 / t) * (S * sig * dNd1 / (2 * sqrt(t)) + r * K * expRT * Nd2);
+    theta = (1.0 / t) * (S * sig * dNd1 / (2 * std::sqrt(t)) + r * K * expRT * Nd2);
 }
 
 // Add random noise to a value
@@ -49,44 +52,56 @@ double addNoise(double value, double noise_level, std::mt19937& gen) {
 }
 
 // Function to standardize a matrix
-void standardizeMatrix(Matrix<double>& mat, vector<double>& means, vector<double>& stdDevs) {
+void standardizeMatrix(Matrix<double>& mat, std::vector<double>& means, std::vector<double>& stdDevs) {
     size_t rows = mat.num_rows();
     size_t cols = mat.num_cols();
 
     // Calculate mean and standard deviation for each row (feature)
     for (size_t i = 0; i < rows; ++i) {
         double sum = 0.0;
-        for (size_t j = 0; j < cols; ++j) {sum += mat[i][j];}
+        for (size_t j = 0; j < cols; ++j) {
+            sum += mat[i][j];
+        }
         means[i] = sum / cols;
 
         double sq_sum = 0.0;
-        for (size_t j = 0; j < cols; ++j) {sq_sum += pow(mat[i][j] - means[i], 2);}
-        stdDevs[i] = sqrt(sq_sum / cols);
+        for (size_t j = 0; j < cols; ++j) {
+            sq_sum += std::pow(mat[i][j] - means[i], 2);
+        }
+        stdDevs[i] = std::sqrt(sq_sum / cols);
 
         // Standardize the data
-        for (size_t j = 0; j < cols; ++j) {mat[i][j] = (mat[i][j] - means[i]) / stdDevs[i];}
+        for (size_t j = 0; j < cols; ++j) {
+            mat[i][j] = (mat[i][j] - means[i]) / stdDevs[i];
+        }
     }
 }
 
 // Function to standardize a vector
-void standardizeVector(vector<double>& vec, double& mean, double& stdDev) {
+void standardizeVector(std::vector<double>& vec, double& mean, double& stdDev) {
     size_t n = vec.size();
 
     // Calculate mean and standard deviation
     double sum = 0.0;
-    for (size_t i = 0; i < n; ++i) {sum += vec[i];}
+    for (size_t i = 0; i < n; ++i) {
+        sum += vec[i];
+    }
     mean = sum / n;
 
     double sq_sum = 0.0;
-    for (size_t i = 0; i < n; ++i) {sq_sum += pow(vec[i] - mean, 2);}
-    stdDev = sqrt(sq_sum / n);
+    for (size_t i = 0; i < n; ++i) {
+        sq_sum += std::pow(vec[i] - mean, 2);
+    }
+    stdDev = std::sqrt(sq_sum / n);
 
     // Standardize the data
-    for (size_t i = 0; i < n; ++i) {vec[i] = (vec[i] - mean) / stdDev;}
+    for (size_t i = 0; i < n; ++i) {
+        vec[i] = (vec[i] - mean) / stdDev;
+    }
 }
 
 // Function to generate synthetic data based on a European option model
-void generateSyntheticData(vector<size_t>& layerSizes, size_t n, Matrix<double>& xTrain, Matrix<double>& zTrain, vector<double>& yTrain, double noise_level, size_t seed) {
+void generateSyntheticData(std::vector<size_t>& layerSizes, size_t n, Matrix<double>& xTrain, Matrix<double>& zTrain, std::vector<double>& yTrain, size_t seed) {
     std::random_device rd;
     std::mt19937 gen(seed);
     std::uniform_real_distribution<> spotDist(90.0, 110.0);
@@ -114,22 +129,22 @@ void generateSyntheticData(vector<size_t>& layerSizes, size_t n, Matrix<double>&
         xTrain[3][j] = sig;
         xTrain[4][j] = r;
 
-        // Assign output values to yTrain and zTrain with noise
-        yTrain[j] = addNoise(call, noise_level, gen);
-        zTrain[0][j] = addNoise(delta, noise_level * 5, gen);
-        zTrain[1][j] = addNoise(delta, noise_level * 5, gen);  // Derivative w.r.t. Strike (same as delta)
-        zTrain[2][j] = addNoise(vega, noise_level, gen);
-        zTrain[3][j] = addNoise(rho, noise_level * 0.1, gen);
-        zTrain[4][j] = addNoise(theta, noise_level * 0.05, gen);
+        // Assign output values to yTrain and zTrain without noise
+        yTrain[j] = call;
+        zTrain[0][j] = delta;
+        zTrain[1][j] = delta;  // Derivative w.r.t. Strike (same as delta)
+        zTrain[2][j] = vega;
+        zTrain[3][j] = rho;
+        zTrain[4][j] = theta;
     }
 
     // Standardize xTrain, yTrain, and zTrain
-    vector<double> xMeans(layerSizes[0]);
-    vector<double> xStdDevs(layerSizes[0]);
+    std::vector<double> xMeans(layerSizes[0]);
+    std::vector<double> xStdDevs(layerSizes[0]);
     standardizeMatrix(xTrain, xMeans, xStdDevs);
 
-    vector<double> zMeans(layerSizes[0]);
-    vector<double> zStdDevs(layerSizes[0]);
+    std::vector<double> zMeans(layerSizes[0]);
+    std::vector<double> zStdDevs(layerSizes[0]);
     standardizeMatrix(zTrain, zMeans, zStdDevs);
 
     double yMean, yStdDev;
@@ -137,19 +152,16 @@ void generateSyntheticData(vector<size_t>& layerSizes, size_t n, Matrix<double>&
 }
 
 // Split data into training and test sets and apply standardization
-void splitData(const Matrix<double>& x, const Matrix<double>& z, const vector<double>& y,
-               Matrix<double>& xTrain, Matrix<double>& xTest,
-               Matrix<double>& zTrain, Matrix<double>& zTest,
-               vector<double>& yTrain, vector<double>& yTest,
-               double trainRatio = 0.8) {
+void splitData(const Matrix<double>& x, const Matrix<double>& z, const std::vector<double>& y, Matrix<double>& xTrain, Matrix<double>& xTest, Matrix<double>& zTrain, Matrix<double>& zTest,
+               std::vector<double>& yTrain, std::vector<double>& yTest, double trainRatio, double noise_level) {
     size_t n = y.size();
     size_t trainSize = static_cast<size_t>(n * trainRatio);
 
     // Prepare containers for the test data statistics
-    vector<double> xMeans(x.num_rows(), 0.0);
-    vector<double> xStdDevs(x.num_rows(), 0.0);
-    vector<double> zMeans(z.num_rows(), 0.0);
-    vector<double> zStdDevs(z.num_rows(), 0.0);
+    std::vector<double> xMeans(x.num_rows(), 0.0);
+    std::vector<double> xStdDevs(x.num_rows(), 0.0);
+    std::vector<double> zMeans(z.num_rows(), 0.0);
+    std::vector<double> zStdDevs(z.num_rows(), 0.0);
     double yMean = 0.0, yStdDev = 0.0;
 
     for (size_t i = 0; i < trainSize; ++i) {
@@ -187,5 +199,17 @@ void splitData(const Matrix<double>& x, const Matrix<double>& z, const vector<do
     }
     for (size_t i = 0; i < yTest.size(); ++i) {
         yTest[i] = (yTest[i] - yMean) / yStdDev;
+    }
+
+    // Add noise after standardization
+    std::random_device rd;
+    std::mt19937 gen(rd());  // Use random seed for test set noise
+    for (size_t i = 0; i < yTest.size(); ++i) {
+        yTest[i] = addNoise(yTest[i], noise_level, gen);
+    }
+    for (size_t i = 0; i < zTest.num_rows(); ++i) {
+        for (size_t j = 0; j < zTest.num_cols(); ++j) {
+            zTest[i][j] = addNoise(zTest[i][j], noise_level, gen);
+        }
     }
 }

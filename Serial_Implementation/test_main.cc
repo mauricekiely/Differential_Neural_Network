@@ -14,7 +14,7 @@ int main() {
     vector<double> yData(n);
 
     // Generate Call Option Data
-    generateSyntheticData(layerSizes, n, xData, zData, yData, 30.0, 1234);
+    generateSyntheticData(layerSizes, n, xData, zData, yData, 1234);
 
 
     size_t trainSize = static_cast<size_t>(n * trainRatio);
@@ -30,7 +30,7 @@ int main() {
     vector<double> yTest(testSize);
 
     // Populate Training Matrices
-    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio);
+    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.0);
 
     // Initialize the neural network with the training data
     NeuralNetwork nn(layerSizes, trainSize, xTrain, zTrain, yTrain, xTest, zTest, yTest);
@@ -45,7 +45,7 @@ int main() {
     }
 
     // Train Model for 300 Epochs with Early Stopping to avoid overfitting
-    nn.train(300, 0.1, 0.0);
+    nn.train(200, 0.1, 1.0);
 
     return 0;
 }
