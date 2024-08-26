@@ -7,7 +7,7 @@ int main() {
     using namespace std::chrono;
 
     // Initialize Network Sizes. Note input is 5 for option data
-    vector<size_t> layerSizes = {5, 10, 10, 1}; 
+    vector<size_t> layerSizes = {5, 8, 8, 1}; 
     size_t n = 1000;
     double trainRatio = 0.8;
 
@@ -37,7 +37,7 @@ int main() {
     vector<double> yTest(testSize);
 
     // Populate Training Matrices
-    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.5);
+    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.25);
 
     // Timer for neural network creation
     auto startNNCreation = high_resolution_clock::now();
@@ -59,7 +59,7 @@ int main() {
     // Timer for neural network training
     auto startNNTraining = high_resolution_clock::now();
     // Train Model for 300 Epochs with Early Stopping to avoid overfitting
-    nn.train(100, 0.1, 0.0);
+    nn.train(100, 0.1, 1.0);
     auto endNNTraining = high_resolution_clock::now();
     auto durationNNTraining = duration_cast<milliseconds>(endNNTraining - startNNTraining).count();
     cout << "Time taken for NN training: " << durationNNTraining << " ms" << endl;

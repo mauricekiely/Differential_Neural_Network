@@ -186,8 +186,9 @@ public:
     // ElementWise Matrix - Matrix subratction
     Matrix operator-(const Matrix& rhs) const {
         Matrix result(myRows, myCols);
-        #pragma omp parallel for collapse(2)
+        #pragma omp parallel for
         for (size_t i = 0; i < myRows; ++i) {
+            #pragma omp simd
             for (size_t j = 0; j < myCols; ++j) {
                 result[i][j] = (*this)[i][j] - rhs[i][j];
             }}
@@ -197,8 +198,9 @@ public:
     // Matrix + Matrix addition
     Matrix operator+(const Matrix& rhs) const {
         Matrix result(myRows, myCols);
-        #pragma omp parallel for collapse(2)
+        #pragma omp parallel for
         for (size_t i = 0; i < myRows; ++i) {
+            #pragma omp simd
             for (size_t j = 0; j < myCols; ++j) {
                 result[i][j] = (*this)[i][j] + rhs[i][j];
             }}
@@ -220,8 +222,9 @@ public:
     // Element-wise multiplication
     Matrix elementwiseMultiply(const Matrix& rhs) const {
         Matrix result(myRows, myCols);
-        #pragma omp parallel for collapse(2)
+        #pragma omp parallel
         for (size_t i = 0; i < myRows; ++i) {
+            #pragma omp simd
             for (size_t j = 0; j < myCols; ++j) {
                 result[i][j] = (*this)[i][j] * rhs[i][j];
             }}
@@ -235,6 +238,7 @@ public:
         #pragma omp parallel for
         for (size_t i = 0; i < myRows; ++i) {
             T sum = 0;
+            #pragma omp simd reduction(+:sum)
             for (size_t j = 0; j < myCols; ++j) {sum += (*this)[i][j];}
             result[i] = sum;
         }

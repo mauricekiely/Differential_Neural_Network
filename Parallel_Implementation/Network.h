@@ -136,16 +136,11 @@ public:
         MSE_Z(myZTrain, myZPred, ZMSE);
     }
 
-    void forwardPassTest(const Matrix<double>& xTest, vector<double>& yPredTest, double& testMSE) {
-        // Local copies of layer activations to avoid modifying the original variables
-        vector<Matrix<double>> localZ(myLayers.size());
-        vector<Matrix<double>> localX(myLayers.size());
-
-        // Input Layer processing
+    void forwardPassTest(const Matrix<double>& xTest, vector<double>& yPredTest, double& testMSE, vector<Matrix<double>>& localZ, vector<Matrix<double>>& localX) {
+        // Use separate matrices for the test forward pass
         localZ[0] = myLayers[0].getW().dot(xTest) + myLayers[0].getB();
         localX[0] = softplus(localZ[0]);
 
-        // Forward pass through the remaining layers
         for (size_t i = 1; i < myLayers.size(); ++i) {
             localZ[i] = myLayers[i].getW().dot(localX[i - 1]) + myLayers[i].getB();
             localX[i] = softplus(localZ[i]);
@@ -205,35 +200,36 @@ public:
     }
 
     void populateWeightTensors(double beta) {
-        size_t n = myZTrain.num_cols(); 
+        size_t n = myZTrain.num_cols();
+        size_t inputSize = myLayerSizes[0];
+
+        // Initialize the indices vector once outside the loops
+        vector<size_t> indices(myLayerSizes.size() - 1, 0);
+
         for (size_t k = 0; k < myLayers.size(); ++k) {
             Matrix<double>& dCdW = myLayers[k].getdCdW();
+            size_t numRows = myLayers[k].getW().num_rows();
+            size_t numCols = myLayers[k].getW().num_cols();
 
-            // Parallelize the loop over 'a' and 'b' within each layer
             #pragma omp parallel for collapse(2) schedule(dynamic)
-            for (size_t a = 0; a < myLayers[k].getW().num_rows(); ++a) {
-                for (size_t b = 0; b < myLayers[k].getW().num_cols(); ++b) {
-                    Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
-                    vector<size_t> indices(myLayerSizes.size() - 1, 0);
-                    for (size_t i = 0; i < myLayerSizes[0]; ++i) {
-                        for (size_t j = 0; j < n; ++j) {
-                            tempMatrix[i][j] = individualWeightTensorEntry(i, j, a, b, k, indices);
-                        }
-                    }
-
+            for (size_t a = 0; a < numRows; ++a) {
+                for (size_t b = 0; b < numCols; ++b) {
                     double norm = 0.0;
-                    #pragma omp parallel for collapse(2) reduction(+:norm)
-                    for (size_t i = 0; i < tempMatrix.num_rows(); ++i) {
-                        for (size_t j = 0; j < tempMatrix.num_cols(); ++j) {
-                            double diff = tempMatrix[i][j];
+
+                    #pragma omp simd reduction(+:norm)
+                    for (size_t i = 0; i < inputSize; ++i) {
+                        for (size_t j = 0; j < n; ++j) {
+                            // Compute the tensor entry directly without temporary matrix
+                            double diff = individualWeightTensorEntry(i, j, a, b, k, false);
                             norm += diff * diff;
                         }
+                        // Reset indices efficiently for the next iteration
+                        std::fill(indices.begin(), indices.end(), 0);
                     }
-                    norm = sqrt(norm);
 
+                    norm = sqrt(norm);
                     norm = beta * (2.0 / n) * norm;
 
-                    // Accumulate the norm into dCdW using atomic to prevent race conditions
                     #pragma omp atomic
                     dCdW[a][b] += norm;
                 }
@@ -243,6 +239,7 @@ public:
 
     void populateBiasTensors(double beta) {
         size_t n = myXTrain.num_cols();  // Number of training points
+        Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
 
         // Iterate over each layer, starting from k=0 (first hidden layer)
         for (size_t k = 0; k < myLayers.size(); ++k) {
@@ -251,24 +248,16 @@ public:
             // Parallelize the loop over 'a' within each layer
             #pragma omp parallel for schedule(dynamic)
             for (size_t a = 0; a < myLayers[k].getB().size(); ++a) {
-                Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
-                vector<size_t> indices(myLayerSizes.size() - 1, 0);
+                double norm = 0.0;
 
+                #pragma omp simd reduction(+:norm)
                 for (size_t i = 0; i < myLayerSizes[0]; ++i) {
                     for (size_t j = 0; j < myXTrain.num_cols(); ++j) {
-                        tempMatrix[i][j] = productRuleComponentOfBackProp(i, j, a, 0, k, indices, true) * (myZPred[i][j] - getZTrain()[i][j]);
-                    }
-                }
-
-
-                double norm = 0.0;
-                #pragma omp parallel for collapse(2) reduction(+:norm)
-                for (size_t i = 0; i < tempMatrix.num_rows(); ++i) {
-                    for (size_t j = 0; j < tempMatrix.num_cols(); ++j) {
-                        double diff = tempMatrix[i][j];
+                        double diff = individualWeightTensorEntry(i, j, a, 0, k, true);
                         norm += diff * diff;
                     }
                 }
+        
                 norm = sqrt(norm);
 
                 norm = beta * (2.0 / n) * norm;
@@ -281,16 +270,17 @@ public:
     }
 
     // Get Derivative w.r.t individual Cost matrix Entry
-    double individualWeightTensorEntry(size_t i, size_t j, size_t a, size_t b, size_t k, vector<size_t>& Indices) {
+    double individualWeightTensorEntry(size_t i, size_t j, size_t a, size_t b, size_t k, bool isBias) {
         // Indices for each layer, excluding the input layer
         vector<size_t> indices(myLayerSizes.size() - 1, 0);  
         
         // Product Rule part of Weight derivative
         double productSum = 0.0;
-        recursiveProdSum(i, j, a, b, k, myLayerSizes, indices, 0, productSum);
+        recursiveProdSum(i, j, a, b, k, myLayerSizes, indices, 0, productSum, isBias);
         
         // Trailing part of derivative
         double trailingSum = 0.0;
+        if (isBias) {return (productSum + trailingSum) * (myZPred[i][j] - getZTrain()[i][j]);}
         if (k == 0) {
             recursiveTrailingTerms(i, j, a, b, k, myLayerSizes, indices, 1, trailingSum);  // Skip the outermost loop
         } else {
@@ -303,18 +293,17 @@ public:
     }
 
     // Recursive function to apply the varying amount of nested summations 
-    void recursiveProdSum(size_t i, size_t j, size_t a, size_t b, size_t k, const vector<size_t>& layerSizes, vector<size_t>& indices, size_t currentLayer, double& sum) {
+    void recursiveProdSum(size_t i, size_t j, size_t a, size_t b, size_t k, const vector<size_t>& layerSizes, vector<size_t>& indices, size_t currentLayer, double& sum, bool isBias) {
         if (currentLayer == layerSizes.size() - 1) {
             // Base case: All layers processed, compute the product rule component and add to the sum
-            double result = productRuleComponentOfBackProp(i, j, a, b, k, indices, false);
-            sum += result;
+            sum += productRuleComponentOfBackProp(i, j, a, b, k, indices, isBias);
             return;
         }
 
         // Recursive case: Iterate over the range for the current layer and recurse
         for (size_t n = 0; n < layerSizes[currentLayer + 1]; ++n) {
             indices[currentLayer] = n;  // Update the index for the current layer
-            recursiveProdSum(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);  // Recur for the next layer
+            recursiveProdSum(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum, isBias);  // Recur for the next layer
         }
     }
 
@@ -431,9 +420,14 @@ public:
         // Variable to store the predictions for the test set
         vector<double> yPredTest(myYTest.size());
 
+        // Initialize local matrices for the test forward pass
+        vector<Matrix<double>> localZ(myLayers.size());
+        vector<Matrix<double>> localX(myLayers.size());
+
         for (size_t epoch = 1; epoch <= epochs; ++epoch) {
+            auto start = chrono::high_resolution_clock::now();
             forwardPropogation();  // Perform forward propagation on the training data
-            
+                
             // Compute gradients w.r.t MSE_Y and accumulate them with the alpha component
             backPropagationOfCost(alpha); 
             // Populate the weight tensors, compute gradients w.r.t MSE_Z, and accumulate them with the beta component
@@ -444,13 +438,13 @@ public:
             double currentMSEY = getMSEY();
 
             // Perform forward pass on the test set and calculate MSE_Y for the test set
-            forwardPassTest(myXTest, yPredTest, testMSE);
+            forwardPassTest(myXTest, yPredTest, testMSE, localZ, localX);
 
             // Update weights using the accumulated gradient
             updateWeights(trainingRate);
 
             // Output the current epoch's MSE values for both training and test sets
-            cout << "Epoch " << epoch << ": MSE_Y (Train) = " << currentMSEY << ", MSE_Y (Test) = " << testMSE << endl;
+            cout << "Epoch " << epoch << ": MSE_Y (Train) = " << currentMSEY << ", MSE_Y (Test) = " << testMSE << ",  Time Taken: "<< duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - start) <<endl;
         }
     }
 
