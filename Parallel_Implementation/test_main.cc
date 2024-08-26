@@ -37,7 +37,7 @@ int main() {
     vector<double> yTest(testSize);
 
     // Populate Training Matrices
-    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.0);
+    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.5);
 
     // Timer for neural network creation
     auto startNNCreation = high_resolution_clock::now();

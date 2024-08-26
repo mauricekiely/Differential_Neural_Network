@@ -132,7 +132,7 @@ void generateSyntheticData(std::vector<size_t>& layerSizes, size_t n, Matrix<dou
         // Assign output values to yTrain and zTrain without noise
         yTrain[j] = call;
         zTrain[0][j] = delta;
-        zTrain[1][j] = -delta;  // Derivative w.r.t. Strike (same as -delta) (dual delta)
+        zTrain[1][j] = delta;  // Derivative w.r.t. Strike (same as delta)
         zTrain[2][j] = vega;
         zTrain[3][j] = rho;
         zTrain[4][j] = theta;
