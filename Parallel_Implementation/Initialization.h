@@ -3,22 +3,6 @@
 #include "Matrix.h"
 #include <random>
 
-// Function to initialize weights using Xavier initialization
-void weightInitializer(Matrix<double>& mat) {
-    std::random_device rd;
-    std::mt19937 gen(1234);
-    std::uniform_real_distribution<> uDist(-1.0, 1.0);
-
-    // Calculate the limit for Xavier initialization
-    double limit = std::sqrt(6.0 / (mat.num_rows() + mat.num_cols()));
-
-    for (size_t i = 0; i < mat.num_rows(); ++i) {
-        for (size_t j = 0; j < mat.num_cols(); ++j) {
-            mat[i][j] = uDist(gen) * limit;
-        }
-    }
-}
-
 // Helper function for the CDF of the standard normal distribution
 static double N(double z) {
     return 0.5 * (1 + std::erf(z * M_SQRT1_2));

@@ -37,7 +37,7 @@ int main() {
     vector<double> yTest(testSize);
 
     // Populate Training Matrices
-    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.0);
+    splitData(xData, zData, yData, xTrain, xTest, zTrain, zTest, yTrain, yTest, trainRatio, 0.25);
 
     // Timer for neural network creation
     auto startNNCreation = high_resolution_clock::now();
@@ -58,7 +58,7 @@ int main() {
 
     // Timer for neural network training
     auto startNNTraining = high_resolution_clock::now();
-    nn.train(50, 0.1, 1.0);
+    nn.train(1000, 0.1, 0.0);
     auto endNNTraining = high_resolution_clock::now();
     auto durationNNTraining = duration_cast<milliseconds>(endNNTraining - startNNTraining).count();
     cout << "Time taken for NN training: " << durationNNTraining << " ms" << endl;

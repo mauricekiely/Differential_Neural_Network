@@ -95,17 +95,17 @@ vector<double> vec_apply(const vector<double>& vec, double (*func)(double)) {
 }
 
 // Activations for matrix entries only in BackProp 
-double sigmoid(double x) {return 1.0 / (1.0 + exp(-x));}
+inline double sigmoid(double x) {return 1.0 / (1.0 + exp(-x));}
 
-double dSigmoid(double x) {
+inline double dSigmoid(double x) {
     double sigmoid_value = sigmoid(x); 
     return sigmoid_value * (1.0 - sigmoid_value);
 }
 
-double softplus(double x) {return log(exp(x) + 1.0);} 
+inline double softplus(double x) {return log(exp(x) + 1.0);} 
 
-double dSoftplus(double x) {return sigmoid(x);} // Derivative of softplus is sigmoid
-double d2Softplus(double x) {
+inline double dSoftplus(double x) {return sigmoid(x);} // Derivative of softplus is sigmoid
+inline double d2Softplus(double x) {
     double sigmoid_value = sigmoid(x);  
     return sigmoid_value * (1.0 - sigmoid_value); 
 }

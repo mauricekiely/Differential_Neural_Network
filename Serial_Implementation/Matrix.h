@@ -17,32 +17,8 @@ class Matrix {
 public:
     // Constructors
     Matrix() : myRows(0), myCols(0) {}
-    Matrix(const size_t rows, const size_t cols) : myRows(rows), myCols(cols), myVector(rows * cols, T(0.0)) {}
+    Matrix(const size_t rows, const size_t cols) : myRows(rows), myCols(cols), myVector(rows * cols) {}
     Matrix(const size_t rows, const size_t cols, const T val) : myRows(rows), myCols(cols), myVector(rows * cols, T(val)) {}
-
-    // Copy and Assignment
-    Matrix(const Matrix& rhs) : myRows(rhs.myRows), myCols(rhs.myCols), myVector(rhs.myVector) {}
-    Matrix& operator=(const Matrix& rhs) {
-        if (this == &rhs) return *this;
-        Matrix<T> temp_matrix(rhs);
-        swap(temp_matrix);
-        return *this;
-    }
-
-    Matrix(Matrix&& rhs) : myRows(rhs.myRows), myCols(rhs.myCols), myVector(std::move(rhs.myVector)) {
-        rhs.myRows = 0;
-        rhs.myCols = 0;
-    }
-    Matrix& operator=(Matrix&& rhs)
-    {
-        if (this == &rhs) return *this;
-        myRows = rhs.myRows;
-        myCols = rhs.myCols;
-        myVector = std::move(rhs.myVector);
-        rhs.myRows = 0;
-        rhs.myCols = 0;
-        return *this;
-    }
 
     // Size Accessors
     size_t num_rows() const { return myRows; }

@@ -29,12 +29,12 @@ public:
         myNNodes(layerSizes[layerIdx]),     myLayerIdx(layerIdx),           // Initialize the Node sizes and Indices of Layerss
 
         myX(layerSizes[layerIdx], n),   myZ(layerSizes[layerIdx], n),     // Initialize the X and Z Matrices of Layers
-        myW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),      myB(layerSizes[layerIdx], 0.2),        // Initialize the Weights and Bias Matrices of Layers
+        myW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),      myB(layerSizes[layerIdx]),        // Initialize the Weights and Bias Matrices of Layers
 
         mydYdX(layerSizes[layerIdx], n, (layerIdx == (layerSizes.size() - 1) ? 1.0 : 0.0)),     mydYdZ(layerSizes[layerIdx], n),       // Initalize the Derivatives w.r.t training data   
-        mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1], 0.0),    mydCdB (layerSizes[layerIdx], 0.0) ,        // Initialize Derivtives w.r.t Weights and Biases    
+        mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),    mydCdB (layerSizes[layerIdx]) ,        // Initialize Derivtives w.r.t Weights and Biases    
 
-        myWTensor(layerSizes[layerIdx], layerSizes[layerIdx - 1], Matrix<double>(layerSizes[0], n, 0.0)),  // Initialize the tensor required to update weights w.r.t ∂Y∂X component of cost
+        myWTensor(layerSizes[layerIdx], layerSizes[layerIdx - 1], Matrix<double>(layerSizes[0], n)),  // Initialize the tensor required to update weights w.r.t ∂Y∂X component of cost
         myBTensor(layerSizes[layerIdx], Matrix<double>(layerSizes[0], n, 0.0))  // Initialize the tensor required to update biases w.r.t ∂Y∂X component of cost
         {          
             weightInitializer(myW);
@@ -188,7 +188,7 @@ public:
         for (int i = myLayers.size() - 1; i >= 0; --i) {
             if (i > 0) {
                 // Calculate the gradient w.r.t. the weights of layer i and accumulate the alpha component
-                myLayers[i].getdCdW() = (result.dot(myLayers[i - 1].getdYdX().transpose()) * alpha);
+                myLayers[i].getdCdW() = (result.dot(myLayers[i - 1].getX().transpose()) * alpha);
             } else {
                 // For the first layer, calculate the gradient w.r.t. the weights using XTrain and accumulate the alpha component
                 myLayers[i].getdCdW() = (result.dot(myXTrain.transpose()) * alpha);
@@ -204,7 +204,7 @@ public:
         }
     }
 
-    void populateWeightTensors(double beta) {
+    void calculateWeightTensors(double beta) {
         size_t n = myZTrain.num_cols();  // Number of training points
 
         // Iterate over each layer, starting from k=0 (first hidden layer)
@@ -219,7 +219,7 @@ public:
                     
                     vector<size_t> indices(myLayerSizes.size() - 1, 0);
                     
-                    // Populate the temporary matrix (inputs x n) of ∂C∂W
+                    // calculate the temporary matrix (inputs x n) of ∂C∂W
                     for (size_t i = 0; i < myLayerSizes[0]; ++i) {
                         for (size_t j = 0; j < n; ++j) {
                             tempMatrix[i][j] = individualWeightTensorEntry(i, j, a, b, k, indices);
@@ -246,7 +246,7 @@ public:
         }
     }
 
-    void populateBiasTensors(double beta) {
+    void calculateBiasTensors(double beta) {
         size_t n = myXTrain.num_cols();  // Number of training points
 
         // Iterate over each layer, starting from k=0 (first hidden layer)
@@ -260,7 +260,7 @@ public:
                 
                 vector<size_t> indices(myLayerSizes.size() - 1, 0);
                 
-                // Populate the temporary matrix (inputs x n) of ∂C∂B
+                // calculate the temporary matrix (inputs x n) of ∂C∂B
                 for (size_t i = 0; i < myLayerSizes[0]; ++i) {
                     for (size_t j = 0; j < myXTrain.num_cols(); ++j) {
                         // Get value for ∂C_{ij}/∂B_a
@@ -439,13 +439,16 @@ public:
         vector<double> yPredTest(myYTest.size());
 
         for (size_t epoch = 1; epoch <= epochs; ++epoch) {
+            auto start = chrono::high_resolution_clock::now();
             forwardPropogation();  // Perform forward propagation on the training data
             
             // Compute gradients w.r.t MSE_Y and accumulate them with the alpha component
             backPropagationOfCost(alpha); 
-            // Populate the weight tensors, compute gradients w.r.t MSE_Z, and accumulate them with the beta component
-            populateWeightTensors(beta);
-            populateBiasTensors(beta);
+            // calculate the weight tensors, compute gradients w.r.t MSE_Z, and accumulate them with the beta component
+            if (beta != 0) {
+                calculateWeightTensors(beta);
+                calculateBiasTensors(beta); 
+            }
 
             // Calculate the combined MSE for the training set
             double currentMSEY = getMSEY();
@@ -457,7 +460,7 @@ public:
             updateWeights(trainingRate);
 
             // Output the current epoch's MSE values for both training and test sets
-            cout << "Epoch " << epoch << ": MSE_Y (Train) = " << currentMSEY << ", MSE_Y (Test) = " << testMSE << endl;
+            cout << "Epoch " << epoch << ": MSE_Y (Train) = " << currentMSEY << ", MSE_Y (Test) = " << testMSE << ",  Time Taken: "<< duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - start)<< endl;
         }
     }
 

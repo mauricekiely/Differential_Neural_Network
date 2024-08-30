@@ -20,24 +20,17 @@ class Layer {
     Matrix<double>  mydYdX, mydYdZ, mydCdW;
     vector<double>  mydCdB;
 
-    // Tensors for updating weights and biases
-    Matrix<Matrix<double>> myWTensor;
-    vector<Matrix<double>> myBTensor;
-
 public:
     Layer(const vector<size_t>& layerSizes, const size_t layerIdx, const size_t n) :
         myNNodes(layerSizes[layerIdx]),     myLayerIdx(layerIdx),           // Initialize the Node sizes and Indices of Layerss
 
         myX(layerSizes[layerIdx], n),   myZ(layerSizes[layerIdx], n),     // Initialize the X and Z Matrices of Layers
-        myW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),      myB(layerSizes[layerIdx], 0.2),        // Initialize the Weights and Bias Matrices of Layers
+        myW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),      myB(layerSizes[layerIdx]),        // Initialize the Weights and Bias Matrices of Layers
 
         mydYdX(layerSizes[layerIdx], n, (layerIdx == (layerSizes.size() - 1) ? 1.0 : 0.0)),     mydYdZ(layerSizes[layerIdx], n),       // Initalize the Derivatives w.r.t training data   
-        mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1], 0.0),    mydCdB (layerSizes[layerIdx], 0.0) ,        // Initialize Derivtives w.r.t Weights and Biases    
-
-        myWTensor(layerSizes[layerIdx], layerSizes[layerIdx - 1], Matrix<double>(layerSizes[0], n, 0.0)),  // Initialize the tensor required to update weights w.r.t ∂Y∂X component of cost
-        myBTensor(layerSizes[layerIdx], Matrix<double>(layerSizes[0], n, 0.0))  // Initialize the tensor required to update biases w.r.t ∂Y∂X component of cost
+        mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),    mydCdB (layerSizes[layerIdx])        // Initialize Derivtives w.r.t Weights and Biases    
         {          
-            weightInitializer(myW);
+            weightInitializer();
             cout << "Layer " << layerIdx << " Created with W size (" << myW.num_rows() << ", " << myW.num_cols() << "), B size " << myB.size() << endl;
         }
 
@@ -55,8 +48,22 @@ public:
     Matrix<double>& getdCdW() {return mydCdW;}
     vector<double>& getdCdB() {return mydCdB;}
 
-    Matrix<Matrix<double>>& getWTensor() {return myWTensor;}
-    vector<Matrix<double>>& getBTensor() {return myBTensor;}
+    // Function to initialize weights using Xavier initialization
+    void weightInitializer() {
+        random_device rd;
+        mt19937 gen(1234);
+        uniform_real_distribution<> uDist(-1.0, 1.0);
+
+        // Calculate the limit for Xavier initialization
+        double limit = sqrt(6.0 / (myW.num_rows() + myW.num_cols()));
+
+        for (size_t i = 0; i < myW.num_rows(); ++i) {
+            for (size_t j = 0; j < myW.num_cols(); ++j) {
+                myW[i][j] = uDist(gen) * limit;
+            }
+        }
+    }
+
 
 };
 
@@ -95,7 +102,7 @@ public:
             }
     }
 
-    void forwardPass(const Matrix<double>& xTrain) {
+    void forwardProp(const Matrix<double>& xTrain) {
         // Input Layer processing
         // Z_1 = W_1 * X_0 + B_1
         myLayers[0].getZ() = myLayers[0].getW().dot(xTrain) + myLayers[0].getB();
@@ -157,7 +164,7 @@ public:
 
     // Combine 2 parts of forward Pass
     void forwardPropogation() {
-        forwardPass(myXTrain);
+        forwardProp(myXTrain);
         backPropagationOfY();
     }
 
@@ -183,7 +190,7 @@ public:
         for (int i = myLayers.size() - 1; i >= 0; --i) {
             if (i > 0) {
                 // Calculate the gradient w.r.t. the weights of layer i and accumulate the alpha component
-                myLayers[i].getdCdW() = (result.dot(myLayers[i - 1].getdYdX().transpose()) * alpha);
+                myLayers[i].getdCdW() = (result.dot(myLayers[i - 1].getX().transpose()) * alpha);
             } else {
                 // For the first layer, calculate the gradient w.r.t. the weights using XTrain and accumulate the alpha component
                 myLayers[i].getdCdW() = (result.dot(myXTrain.transpose()) * alpha);
@@ -199,58 +206,45 @@ public:
         }
     }
 
-    void populateWeightTensors(double beta) {
+    void calculateWeightTensors(double beta) {
         size_t n = myZTrain.num_cols();
         size_t inputSize = myLayerSizes[0];
 
         // Initialize the indices vector once outside the loops
-        vector<size_t> indices(myLayerSizes.size() - 1, 0);
-
         for (size_t k = 0; k < myLayers.size(); ++k) {
-            Matrix<double>& dCdW = myLayers[k].getdCdW();
             size_t numRows = myLayers[k].getW().num_rows();
             size_t numCols = myLayers[k].getW().num_cols();
 
-            #pragma omp parallel for collapse(2) schedule(dynamic)
+            #pragma omp parallel for collapse(2) schedule(dynamic, 8)
             for (size_t a = 0; a < numRows; ++a) {
                 for (size_t b = 0; b < numCols; ++b) {
                     double norm = 0.0;
-
-                    #pragma omp simd reduction(+:norm)
                     for (size_t i = 0; i < inputSize; ++i) {
                         for (size_t j = 0; j < n; ++j) {
                             // Compute the tensor entry directly without temporary matrix
                             double diff = individualWeightTensorEntry(i, j, a, b, k, false);
                             norm += diff * diff;
                         }
-                        // Reset indices efficiently for the next iteration
-                        std::fill(indices.begin(), indices.end(), 0);
                     }
-
-                    norm = sqrt(norm);
-                    norm = beta * (2.0 / n) * norm;
-
-                    #pragma omp atomic
-                    dCdW[a][b] += norm;
+                    
+                    myLayers[k].getdCdW()[a][b] += beta * (2.0 / n) * sqrt(norm);
                 }
             }
         }
     }
 
-    void populateBiasTensors(double beta) {
+    void calculateBiasTensors(double beta) {
         size_t n = myXTrain.num_cols();  // Number of training points
         Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
 
         // Iterate over each layer, starting from k=0 (first hidden layer)
         for (size_t k = 0; k < myLayers.size(); ++k) {
-            vector<double>& dCdB = myLayers[k].getdCdB();  // Reference to the condensed vector of norms
 
             // Parallelize the loop over 'a' within each layer
-            #pragma omp parallel for schedule(dynamic)
+            #pragma omp parallel for schedule(dynamic, 8)
             for (size_t a = 0; a < myLayers[k].getB().size(); ++a) {
                 double norm = 0.0;
 
-                #pragma omp simd reduction(+:norm)
                 for (size_t i = 0; i < myLayerSizes[0]; ++i) {
                     for (size_t j = 0; j < myXTrain.num_cols(); ++j) {
                         double diff = individualWeightTensorEntry(i, j, a, 0, k, true);
@@ -264,7 +258,7 @@ public:
 
                 // Accumulate the norm into dCdB using atomic to prevent race conditions
                 #pragma omp atomic
-                dCdB[a] += norm;
+                myLayers[k].getdCdB()[a] += norm;
             }
         }
     }
@@ -311,15 +305,12 @@ public:
    void recursiveTrailingTerms(size_t i, size_t j, size_t a, size_t b, size_t k, const vector<size_t>& layerSizes, vector<size_t>& indices, size_t currentLayer, double& sum) {
         if (currentLayer == layerSizes.size() - 1) {
             // Base case: All layers processed, compute the trailing terms and add to the sum
-            double result = trailingTermsOfProd(i, j, a, b, k, indices);
-            sum += result;
+            sum += trailingTermsOfProd(i, j, a, b, k, indices);
             return;
         }
 
         // Handle the special cases where indices are fixed due to W_{ab} Components in derivative
-        if (currentLayer == k) {
-            recursiveTrailingTerms(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);
-        } else if (currentLayer == k - 1) {
+        if (currentLayer == k || currentLayer == k - 1) {
             recursiveTrailingTerms(i, j, a, b, k, layerSizes, indices, currentLayer + 1, sum);
         } else {
             // Recursive case: Iterate over the range for the current layer and recurse
@@ -430,9 +421,12 @@ public:
                 
             // Compute gradients w.r.t MSE_Y and accumulate them with the alpha component
             backPropagationOfCost(alpha); 
-            // Populate the weight tensors, compute gradients w.r.t MSE_Z, and accumulate them with the beta component
-            populateWeightTensors(beta);
-            populateBiasTensors(beta);
+            // calculate the weight tensors, compute gradients w.r.t MSE_Z, and accumulate them with the beta component
+            if (beta != 0) {
+                calculateWeightTensors(beta);
+                calculateBiasTensors(beta); 
+            }
+            
 
             // Calculate the combined MSE for the training set
             double currentMSEY = getMSEY();
