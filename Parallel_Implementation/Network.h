@@ -4,9 +4,7 @@
 #include "ActivationFuncs.h"
 #include "Initialization.h"
 
-#include <thread>  // Include the thread header
 #include <chrono>
-
 #include <iostream>
 
 class Layer {
@@ -30,7 +28,7 @@ public:
         mydYdX(layerSizes[layerIdx], n, (layerIdx == (layerSizes.size() - 1) ? 1.0 : 0.0)),     mydYdZ(layerSizes[layerIdx], n),       // Initalize the Derivatives w.r.t training data   
         mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),    mydCdB (layerSizes[layerIdx])        // Initialize Derivtives w.r.t Weights and Biases    
         {          
-            weightInitializer();
+            weightInitializer();    // Xavier Weight Initialization
             cout << "Layer " << layerIdx << " Created with W size (" << myW.num_rows() << ", " << myW.num_cols() << "), B size " << myB.size() << endl;
         }
 
@@ -86,8 +84,7 @@ class NeuralNetwork {
 public:
     NeuralNetwork(const vector<size_t>& layerSizes, const size_t n, const Matrix<double>& xTrain, const Matrix<double>& zTrain, const vector<double>& yTrain, 
                                                                     const Matrix<double>& xTest, const Matrix<double>& zTest, const vector<double>& yTest) : 
-        // Initilaize the size of the network and the number of Hidden Layers + Output Layer.
-        // Note: Here there is no input layer as there is a linear activation to first hidden layer so we just need Xtrain and Ztrain
+        // Initilaize the size of the network and the number of Hidden Layers + Output Layer.  Note: Here there is no input layer
         myNLayers(layerSizes.size()),               myLayerSizes(layerSizes), 
 
         // Initialize the training Data and Matrices to hold predictions
@@ -97,9 +94,7 @@ public:
             if (myNLayers < 2) {throw invalid_argument("A neural network must have at least an input and an output layer.");}
 
             // Initialize the layers excluding the input layer as we only need xTrain. Dim is used for weight in 1st hidden Layer
-            for (size_t i = 1; i < myNLayers; ++i) {
-                myLayers.emplace_back(layerSizes, i, n);
-            }
+            for (size_t i = 1; i < myNLayers; ++i) {myLayers.emplace_back(layerSizes, i, n);}
     }
 
     void forwardProp(const Matrix<double>& xTrain) {
@@ -143,6 +138,7 @@ public:
         MSE_Z(myZTrain, myZPred, ZMSE);
     }
 
+    // Forward Pass to calculate MSE
     void forwardPassTest(const Matrix<double>& xTest, vector<double>& yPredTest, double& testMSE, vector<Matrix<double>>& localZ, vector<Matrix<double>>& localX) {
         // Use separate matrices for the test forward pass
         localZ[0] = myLayers[0].getW().dot(xTest) + myLayers[0].getB();
@@ -176,7 +172,7 @@ public:
         Hence   ∂C/∂W = 𝛼 (∂MSE_Y/∂W) + β (∂MSE_Z/∂W)
                 ∂C/∂B = 𝛼 (∂MSE_Y/∂B) + β (∂MSE_Z/∂B)
 
-        This function breaks the backprop into first finding derivatives w.r.t Z and then w.r.t Y
+        This function does backprop w.r.t Y
     */
     void backPropagationOfCost(double alpha) {
         // Convert vectors to 1D matrices for computation of ∂MSE_Y/∂W
@@ -206,48 +202,56 @@ public:
         }
     }
 
+
+    // Backprop w.r.t Z for weights
     void calculateWeightTensors(double beta) {
+        // Dims for cost matrix in tensor
         size_t n = myZTrain.num_cols();
         size_t inputSize = myLayerSizes[0];
+
+        double norm = 0.0, diff = 0.0;
 
         // Initialize the indices vector once outside the loops
         for (size_t k = 0; k < myLayers.size(); ++k) {
             size_t numRows = myLayers[k].getW().num_rows();
             size_t numCols = myLayers[k].getW().num_cols();
 
-            #pragma omp parallel for collapse(2) schedule(dynamic, 8)
+            // Parallelize the loop over a and b within each layer
+            #pragma omp parallel for collapse(2) schedule(dynamic)
             for (size_t a = 0; a < numRows; ++a) {
                 for (size_t b = 0; b < numCols; ++b) {
-                    double norm = 0.0;
+                    norm = 0.0;
                     for (size_t i = 0; i < inputSize; ++i) {
                         for (size_t j = 0; j < n; ++j) {
                             // Compute the tensor entry directly without temporary matrix
-                            double diff = individualWeightTensorEntry(i, j, a, b, k, false);
+                            diff = individualWeightTensorEntry(i, j, a, b, k, false);
                             norm += diff * diff;
                         }
                     }
-                    
+
+                    // Accumulate the norm into dCdB 
                     myLayers[k].getdCdW()[a][b] += beta * (2.0 / n) * sqrt(norm);
                 }
             }
         }
     }
 
+    // Backprop w.r.t Z for bias
     void calculateBiasTensors(double beta) {
-        size_t n = myXTrain.num_cols();  // Number of training points
-        Matrix<double> tempMatrix(myLayerSizes[0], n, 0.0);
+        size_t n = myXTrain.num_cols();
+        double norm = 0.0, diff = 0.0;
 
         // Iterate over each layer, starting from k=0 (first hidden layer)
         for (size_t k = 0; k < myLayers.size(); ++k) {
 
             // Parallelize the loop over 'a' within each layer
-            #pragma omp parallel for schedule(dynamic, 8)
+            #pragma omp parallel for schedule(dynamic)
             for (size_t a = 0; a < myLayers[k].getB().size(); ++a) {
-                double norm = 0.0;
+                norm = 0.0;
 
                 for (size_t i = 0; i < myLayerSizes[0]; ++i) {
                     for (size_t j = 0; j < myXTrain.num_cols(); ++j) {
-                        double diff = individualWeightTensorEntry(i, j, a, 0, k, true);
+                        diff = individualWeightTensorEntry(i, j, a, 0, k, true);
                         norm += diff * diff;
                     }
                 }
@@ -256,14 +260,13 @@ public:
 
                 norm = beta * (2.0 / n) * norm;
 
-                // Accumulate the norm into dCdB using atomic to prevent race conditions
-                #pragma omp atomic
+                // Accumulate the norm into dCdB 
                 myLayers[k].getdCdB()[a] += norm;
             }
         }
     }
 
-    // Get Derivative w.r.t individual Cost matrix Entry
+    // Get individual Cost Derivative w.r.t weight matrix Entry
     double individualWeightTensorEntry(size_t i, size_t j, size_t a, size_t b, size_t k, bool isBias) {
         // Indices for each layer, excluding the input layer
         vector<size_t> indices(myLayerSizes.size() - 1, 0);  
@@ -286,7 +289,7 @@ public:
         return (productSum + trailingSum) * mse_component;
     }
 
-    // Recursive function to apply the varying amount of nested summations 
+    // Recursive function to apply the varying nested summations 
     void recursiveProdSum(size_t i, size_t j, size_t a, size_t b, size_t k, const vector<size_t>& layerSizes, vector<size_t>& indices, size_t currentLayer, double& sum, bool isBias) {
         if (currentLayer == layerSizes.size() - 1) {
             // Base case: All layers processed, compute the product rule component and add to the sum

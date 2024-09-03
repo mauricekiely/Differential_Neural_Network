@@ -58,7 +58,7 @@ int main() {
 
     // Timer for neural network training
     auto startNNTraining = high_resolution_clock::now();
-    nn.train(1000, 0.1, 0.0);
+    nn.train(100, 0.1, 0.0);
     auto endNNTraining = high_resolution_clock::now();
     auto durationNNTraining = duration_cast<milliseconds>(endNNTraining - startNNTraining).count();
     cout << "Time taken for NN training: " << durationNNTraining << " ms" << endl;

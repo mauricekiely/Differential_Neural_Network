@@ -20,9 +20,6 @@ class Layer {
     Matrix<double>  mydYdX, mydYdZ, mydCdW;
     vector<double>  mydCdB;
 
-    // Tensors for updating weights and biases
-    Matrix<Matrix<double>> myWTensor;
-    vector<Matrix<double>> myBTensor;
 
 public:
     Layer(const vector<size_t>& layerSizes, const size_t layerIdx, const size_t n) :
@@ -32,12 +29,9 @@ public:
         myW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),      myB(layerSizes[layerIdx]),        // Initialize the Weights and Bias Matrices of Layers
 
         mydYdX(layerSizes[layerIdx], n, (layerIdx == (layerSizes.size() - 1) ? 1.0 : 0.0)),     mydYdZ(layerSizes[layerIdx], n),       // Initalize the Derivatives w.r.t training data   
-        mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),    mydCdB (layerSizes[layerIdx]) ,        // Initialize Derivtives w.r.t Weights and Biases    
-
-        myWTensor(layerSizes[layerIdx], layerSizes[layerIdx - 1], Matrix<double>(layerSizes[0], n)),  // Initialize the tensor required to update weights w.r.t ∂Y∂X component of cost
-        myBTensor(layerSizes[layerIdx], Matrix<double>(layerSizes[0], n, 0.0))  // Initialize the tensor required to update biases w.r.t ∂Y∂X component of cost
+        mydCdW(layerSizes[layerIdx], layerSizes[layerIdx - 1]),    mydCdB (layerSizes[layerIdx])        // Initialize Derivtives w.r.t Weights and Biases    
         {          
-            weightInitializer(myW);
+            weightInitializer();
             cout << "Layer " << layerIdx << " Created with W size (" << myW.num_rows() << ", " << myW.num_cols() << "), B size " << myB.size() << endl;
         }
 
@@ -55,8 +49,21 @@ public:
     Matrix<double>& getdCdW() {return mydCdW;}
     vector<double>& getdCdB() {return mydCdB;}
 
-    Matrix<Matrix<double>>& getWTensor() {return myWTensor;}
-    vector<Matrix<double>>& getBTensor() {return myBTensor;}
+    // Function to initialize weights using Xavier initialization
+    void weightInitializer() {
+        random_device rd;
+        mt19937 gen(1234);
+        uniform_real_distribution<> uDist(-1.0, 1.0);
+
+        // Calculate the limit for Xavier initialization
+        double limit = sqrt(6.0 / (myW.num_rows() + myW.num_cols()));
+
+        for (size_t i = 0; i < myW.num_rows(); ++i) {
+            for (size_t j = 0; j < myW.num_cols(); ++j) {
+                myW[i][j] = uDist(gen) * limit;
+            }
+        }
+    }
 
 };
 
@@ -174,7 +181,7 @@ public:
         Hence   ∂C/∂W = 𝛼 (∂MSE_Y/∂W) + β (∂MSE_Z/∂W)
                 ∂C/∂B = 𝛼 (∂MSE_Y/∂B) + β (∂MSE_Z/∂B)
 
-        This function breaks the backprop into first finding derivatives w.r.t Z and then w.r.t Y
+        This function does backprop w.r.t Y
     */
     void backPropagationOfCost(double alpha) {
         // Convert vectors to 1D matrices for computation of ∂MSE_Y/∂W
@@ -204,8 +211,9 @@ public:
         }
     }
 
+    // Backprop w.r.t Z for weights
     void calculateWeightTensors(double beta) {
-        size_t n = myZTrain.num_cols();  // Number of training points
+        size_t n = myZTrain.num_cols();  
 
         // Iterate over each layer, starting from k=0 (first hidden layer)
         for (size_t k = 0; k < myLayers.size(); ++k) {
@@ -246,6 +254,7 @@ public:
         }
     }
 
+    // Backprop w.r.t Z for bias
     void calculateBiasTensors(double beta) {
         size_t n = myXTrain.num_cols();  // Number of training points
 

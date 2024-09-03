@@ -1,14 +1,28 @@
 #include <iostream>
 #include <chrono>
+#include <fstream> // For file operations
+#include <cstdlib> // For std::atoi
 
 #include "Network.h"
 
-int main() {
+int main(int argc, char* argv[]) {
     using namespace std::chrono;
+
+    // Check if the correct number of arguments is provided
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <n> <num_threads>" << std::endl;
+        return 1;
+    }
+
+    // Parse the command-line arguments
+    size_t n = std::atoi(argv[1]); // Convert first argument to size_t for 'n'
+    int num_threads = std::atoi(argv[2]); // Convert second argument to int for 'num_threads'
+
+    // Set the number of threads for OpenMP
+    omp_set_num_threads(num_threads);
 
     // Initialize Network Sizes. Note input is 5 for option data
     vector<size_t> layerSizes = {5, 8, 8, 1}; 
-    size_t n = 1000;
     double trainRatio = 0.8;
 
     // Training data 
@@ -59,10 +73,9 @@ int main() {
     // Timer for neural network training
     auto startNNTraining = high_resolution_clock::now();
     // Train Model for 300 Epochs with Early Stopping to avoid overfitting
-    nn.train(100, 0.1, 1.0);
+    nn.train(200, 0.1, 1.0);
     auto endNNTraining = high_resolution_clock::now();
     auto durationNNTraining = duration_cast<milliseconds>(endNNTraining - startNNTraining).count();
     cout << "Time taken for NN training: " << durationNNTraining << " ms" << endl;
-
     return 0;
 }
